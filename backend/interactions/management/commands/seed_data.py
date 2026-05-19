@@ -86,7 +86,7 @@ class Command(BaseCommand):
             count = HCP.objects.count()
             HCP.objects.all().delete()
             self.stdout.write(
-                self.style.WARNING(f"🗑️  Deleted {count} existing HCP record(s).")
+                self.style.WARNING(f"[DELETED] {count} existing HCP record(s).")
             )
 
         created_count = 0
@@ -101,18 +101,18 @@ class Command(BaseCommand):
                 if created:
                     created_count += 1
                     self.stdout.write(
-                        self.style.SUCCESS(f"  ✅ Created: {hcp.name} ({hcp.get_specialty_display()})")
+                        self.style.SUCCESS(f"  [OK] Created: {hcp.name} ({hcp.get_specialty_display()})")
                     )
                 else:
                     skipped_count += 1
                     self.stdout.write(
-                        self.style.HTTP_INFO(f"  ⏭️  Skipped (already exists): {hcp.name}")
+                        self.style.HTTP_INFO(f"  [SKIPPED] (already exists): {hcp.name}")
                     )
 
         self.stdout.write("")
         self.stdout.write(
             self.style.SUCCESS(
-                f"✔ Seeding complete — {created_count} created, {skipped_count} skipped."
+                f"[DONE] Seeding complete — {created_count} created, {skipped_count} skipped."
             )
         )
         self.stdout.write(
