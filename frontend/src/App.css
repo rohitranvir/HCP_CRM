@@ -1,0 +1,37 @@
+.app-container {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: #ffffff;
+}
+
+.left-panel {
+  flex: 0 0 60%; /* Left Panel takes 60% width */
+  max-width: 60%;
+}
+
+.right-panel {
+  flex: 0 0 40%; /* Right Panel takes 40% width */
+  max-width: 40%;
+  border-left: 1px solid #e0e0e0;
+}
+
+/* Make it responsive for smaller screens */
+@media (max-width: 1024px) {
+  .app-container {
+    flex-direction: column;
+  }
+  
+  .left-panel, .right-panel {
+    flex: none;
+    width: 100%;
+    max-width: 100%;
+    height: 50vh;
+  }
+  
+  .right-panel {
+    border-left: none;
+    border-top: 1px solid #e0e0e0;
+  }
+}
