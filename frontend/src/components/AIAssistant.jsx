@@ -22,15 +22,12 @@ const AIAssistant = () => {
     scrollToBottom();
   }, [messages, isTyping]);
 
-  const handleSend = async (e) => {
-    e.preventDefault();
-    const text = inputValue.trim();
+  const sendMessage = async (text) => {
     if (!text) return;
 
     // 1. Add user message
     dispatch(addMessage({ text, sender: 'user' }));
-    setInputValue('');
-
+    
     // 2. Set typing
     dispatch(setTyping(true));
 
@@ -47,7 +44,9 @@ const AIAssistant = () => {
       dispatch(addMessage({ 
         text: displayText, 
         sender: 'ai',
-        success: isSuccess && !message.startsWith('❌') && !message.startsWith('⚠️') 
+        success: isSuccess && !message.startsWith('❌') && !message.startsWith('⚠️'),
+        tool_used: tool_used,
+        result: result
       }));
 
       // 4b. Dispatch to Interaction form based on tool
@@ -78,6 +77,19 @@ const AIAssistant = () => {
     }
   };
 
+  const handleSend = (e) => {
+    e.preventDefault();
+    const text = inputValue.trim();
+    if (text) {
+      sendMessage(text);
+      setInputValue('');
+    }
+  };
+
+  const handleOptionClick = (optionText) => {
+    sendMessage(optionText);
+  };
+
   return (
     <div className="ai-panel-container">
       <div className="ai-header">
@@ -101,6 +113,60 @@ const AIAssistant = () => {
             <div className={`message-bubble ${msg.sender} ${msg.success ? 'success' : ''}`}>
               {msg.text}
             </div>
+            
+            {/* Rich content for AI messages */}
+            {msg.sender === 'ai' && msg.result && (
+              <div className="ai-rich-content">
+                {/* 1. Summarize History Result */}
+                {msg.tool_used === 'summarize_history_tool' && msg.result.summary && msg.result.status === 'ok' && (
+                  <div className="ai-card summary-card">
+                    <h4>📝 {msg.result.hcp_name} - Summary</h4>
+                    <p className="summary-text">{msg.result.summary}</p>
+                    <small>Based on {msg.result.total_interactions} interaction(s)</small>
+                  </div>
+                )}
+
+                {/* 2. Suggest Follow-ups Result */}
+                {msg.tool_used === 'suggest_followup_tool' && msg.result.suggestions?.length > 0 && (
+                  <div className="ai-card suggestions-card">
+                    <h4>💡 Suggested Follow-ups</h4>
+                    <ul>
+                      {msg.result.suggestions.map((s, i) => <li key={i}>{s}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                {/* 3. Search HCP Result */}
+                {msg.tool_used === 'search_hcp_tool' && msg.result.results?.length > 0 && (
+                  <div className="ai-card search-results-card">
+                    <h4>🔍 Search Results</h4>
+                    <div className="hcp-list">
+                      {msg.result.results.map(hcp => (
+                        <div key={hcp.id} className="hcp-list-item">
+                          <div className="hcp-name">{hcp.name}</div>
+                          <div className="hcp-specialty">{hcp.specialty_display} • {hcp.hospital}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* 4. Unknown Intent Options */}
+                {msg.tool_used === 'unknown' && msg.result.options?.length > 0 && (
+                  <div className="options-container">
+                    {msg.result.options.map((option, i) => (
+                      <button 
+                        key={i} 
+                        className="option-pill"
+                        onClick={() => handleOptionClick(option)}
+                        disabled={isTyping}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ))}
 

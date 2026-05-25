@@ -2,7 +2,7 @@
 interactions/agent.py
 AI-First CRM HCP Module — LangGraph Agent
 
-StateGraph with 5 tools powered by ChatGroq (gemma2-9b-it):
+StateGraph with 5 tools powered by GPT-OSS 120B via Groq OpenAI-compatible API:
     1. log_interaction_tool     — NL → extract fields → save to DB
     2. edit_interaction_tool    — NL correction → patch specific fields
     3. suggest_followup_tool    — interaction_id → 3 LLM suggestions
@@ -22,8 +22,8 @@ from datetime import date, datetime
 from typing import TypedDict, Optional, Any
 
 import django
-from langchain_groq import ChatGroq
-from langchain.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 
 logger = logging.getLogger(__name__)
@@ -38,14 +38,16 @@ except RuntimeError:
 
 # ─── LLM Factory ─────────────────────────────────────────────────────────────
 
-def _llm(temperature: float = 0.1) -> ChatGroq:
+def _llm(temperature: float = 0.1) -> ChatOpenAI:
     api_key = os.getenv("GROQ_API_KEY", "")
     if not api_key:
         raise EnvironmentError("GROQ_API_KEY environment variable is not set.")
-    return ChatGroq(
-        model="gemma2-9b-it",
+    return ChatOpenAI(
+        model="openai/gpt-oss-120b",
         api_key=api_key,
+        base_url="https://api.groq.com/openai/v1",
         temperature=temperature,
+        max_tokens=1024,  # Sufficient for JSON extraction & summaries; fits Groq free TPM limit
     )
 
 
@@ -145,7 +147,7 @@ def log_interaction_tool(state: AgentState) -> AgentState:
     today = date.today().isoformat()
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system", f"""You are a CRM data-extraction assistant.
+        ("system", """You are a CRM data-extraction assistant.
 Today's date is {today}.
 
 Extract interaction details from the user's message and return a JSON object with ONLY these keys:
@@ -171,7 +173,8 @@ Rules:
 
     try:
         chain    = prompt | _llm(temperature=0.0)
-        response = chain.invoke({"message": state["user_message"]})
+        response = chain.invoke({"message": state["user_message"], "today": today})
+
         raw      = response.content.strip()
 
         # Strip markdown fences if present

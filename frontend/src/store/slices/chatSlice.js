@@ -10,7 +10,7 @@ const chatSlice = createSlice({
   initialState,
   reducers: {
     addMessage: (state, action) => {
-      // action.payload = { text: "...", sender: "user" | "ai" }
+      // action.payload = { text, sender, success, tool_used, result }
       state.messages.push(action.payload);
     },
     setTyping: (state, action) => {

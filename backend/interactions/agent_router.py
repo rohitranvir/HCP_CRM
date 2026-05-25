@@ -19,8 +19,8 @@ import os
 import logging
 from typing import Optional
 
-from langchain_groq import ChatGroq
-from langchain.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ INTENT_LABELS: dict[str, str] = {
     "suggest_followup":  "Suggest Follow-up Actions",
     "search_hcp":        "Search HCP Records",
     "summarize_history": "Summarize HCP History",
+    "unknown":           "Unknown Request",
 }
 
 VALID_INTENTS = set(INTENT_LABELS.keys())
@@ -52,22 +53,66 @@ Examples:
 """
 
 
-def _get_llm() -> ChatGroq:
+def _get_llm() -> ChatOpenAI:
     api_key = os.getenv("GROQ_API_KEY", "")
     if not api_key:
         raise EnvironmentError("GROQ_API_KEY is not set.")
-    return ChatGroq(model="gemma2-9b-it", api_key=api_key, temperature=0.0)
+    return ChatOpenAI(
+        model="openai/gpt-oss-120b",
+        api_key=api_key,
+        base_url="https://api.groq.com/openai/v1",
+        temperature=0.0,
+        max_tokens=50,  # Intent classifier only returns 1-3 words
+    )
+
+
+
+# ─── Keyword-based fallback intent detector ───────────────────────────────────
+
+_KEYWORD_MAP: list[tuple[list[str], str]] = [
+    # log_interaction — phrases about recording/logging a new visit
+    (["met ", "visited ", "had a meeting", "in-person visit", "called on", "spoke with",
+      "today i ", "yesterday i ", "discussed with dr", "interaction with dr",
+      "log this", "log interaction", "record this", "record interaction"], "log_interaction"),
+    # edit_interaction — modifying an existing record
+    (["change the", "update the", "correct the", "edit interaction", "modify interaction",
+      "change sentiment", "update sentiment", "update outcome", "change outcome",
+      "update date", "change date", "update field", "edit record"], "edit_interaction"),
+    # suggest_followup — follow-up recommendations
+    (["suggest follow", "follow-up", "followup", "next steps for interaction",
+      "what should i do next", "recommend next", "follow up actions"], "suggest_followup"),
+    # summarize_history — history summary
+    (["summarize", "summarise", "summary of", "history of", "engagement history",
+      "past interactions", "interaction history", "all interactions with"], "summarize_history"),
+    # search_hcp — lookup (lowest priority, kept last)
+    (["find ", "search for", "look up", "lookup", "show me", "get hcp", "find hcp",
+      "find dr", "search dr"], "search_hcp"),
+]
+
+
+def _keyword_intent(user_message: str) -> str | None:
+    """Return intent by keyword matching, or None if no match."""
+    msg = user_message.lower()
+    for keywords, intent in _KEYWORD_MAP:
+        if any(kw in msg for kw in keywords):
+            return intent
+    return None
 
 
 # ─── Step 1: Fast intent detection (standalone, no full graph overhead) ───────
 
 def detect_intent(user_message: str) -> str:
     """
-    Use ChatGroq to classify the user's intent into one of 5 categories.
+    Classify user intent using a 3-layer approach:
+      1. LLM exact match
+      2. Regex scan inside verbose LLM output
+      3. Keyword fallback
 
     Returns:
         str: one of the VALID_INTENTS keys
     """
+    import re
+
     prompt = ChatPromptTemplate.from_messages([
         ("system", f"""You are an intent classifier for a pharmaceutical CRM AI assistant.
 
@@ -77,29 +122,47 @@ Classify the user's message into EXACTLY ONE of these intents:
 - suggest_followup     : generating follow-up action recommendations
 - search_hcp           : finding or looking up an HCP record
 - summarize_history    : summarising past interaction history for an HCP
+- unknown              : off-topic, gibberish, or unrelated input
 
 {INTENT_EXAMPLES}
+- "asdfjkl" → unknown
+- "tell me a joke" → unknown
 
-Respond with ONLY the intent name (snake_case). No punctuation. No explanation."""),
+Respond with ONLY the intent name (snake_case). No punctuation. No explanation.
+Example responses: log_interaction  /  search_hcp  /  unknown"""),
         ("human", "{message}"),
     ])
 
     try:
         chain    = prompt | _get_llm()
         response = chain.invoke({"message": user_message})
-        intent   = response.content.strip().lower().replace("-", "_").replace(" ", "_")
+        raw      = response.content.strip().lower()
 
-        if intent not in VALID_INTENTS:
-            logger.warning(
-                "Router received unknown intent '%s', defaulting to search_hcp", intent
-            )
-            return "search_hcp"
+        # ── Layer 1: exact match ───────────────────────────────────────────
+        cleaned = raw.replace("-", "_").replace(" ", "_").split("\n")[0].strip(".:,'\"")
+        if cleaned in VALID_INTENTS:
+            return cleaned
 
-        return intent
+        # ── Layer 2: regex scan — find any valid intent inside verbose output
+        for intent in VALID_INTENTS:
+            if re.search(rf"\b{re.escape(intent)}\b", raw):
+                logger.info("Intent extracted via regex from verbose output: '%s'", intent)
+                return intent
+
+        # ── Layer 3: keyword fallback ─────────────────────────────────────
+        kw_intent = _keyword_intent(user_message)
+        if kw_intent:
+            logger.info("Intent determined via keyword fallback: '%s'", kw_intent)
+            return kw_intent
+
+        logger.warning("All intent layers failed for: '%s' — defaulting to unknown", raw)
+        return "unknown"
 
     except Exception as exc:
         logger.exception("Intent detection failed: %s", exc)
-        return "search_hcp"
+        # Even on exception, try keyword fallback before giving up
+        return _keyword_intent(user_message) or "unknown"
+
 
 
 # ─── Step 2: Route to agent ───────────────────────────────────────────────────
@@ -142,6 +205,28 @@ def route(
     # ── Detect intent ─────────────────────────────────────────────────────
     intent = detect_intent(user_message)
     logger.info("Router detected intent: '%s' for message: '%s'", intent, user_message[:80])
+
+    if intent == "unknown":
+        return {
+            "tool":       "unknown",
+            "tool_label": "Unknown Request",
+            "intent":     "unknown",
+            "result":     {
+                "message": "👋 I'm your CRM assistant! I didn't quite catch that. I can help you with the following tasks. What would you like to do?",
+                "options": [
+                    "Log a New Interaction",
+                    "Search for an HCP",
+                    "Summarize HCP History",
+                    "Suggest Follow-up Actions"
+                ]
+            },
+            "error":      "",
+            "input": {
+                "message":        user_message,
+                "interaction_id": interaction_id,
+                "hcp_name":       hcp_name,
+            },
+        }
 
     # ── Guard: edit / suggest require interaction_id ──────────────────────
     if intent in ("edit_interaction", "suggest_followup") and not interaction_id:

@@ -412,6 +412,8 @@ class ChatView(APIView):
             elif tool == "summarize_history_tool":
                 hcp = result.get("hcp_name", "")
                 summary = f"📋 Engagement summary generated for {hcp}."
+            elif tool == "unknown":
+                summary = result.get("message", "👋 I didn't quite catch that. I can help you log interactions, search for HCPs, summarize history, or suggest follow-ups!")
             else:
                 summary = "✅ Request processed successfully."
 
